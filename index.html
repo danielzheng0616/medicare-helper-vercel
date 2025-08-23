@@ -1,51 +1,109 @@
-// api/ask.js — Vercel Serverless Function
-export default async function handler(req, res) {
-  try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medicare Helper — Always-on AI</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; color:#111; }
+    h1 { margin: 0 0 8px; }
+    .card { border:1px solid #e5e7eb; border-radius:14px; padding:16px; margin:10px 0; background:#fff; box-shadow:0 6px 16px rgba(0,0,0,.05); }
+    label { display:block; margin:8px 0 4px; font-size:14px; }
+    input, button { font: inherit; }
+    input[type="text"], input[type="date"] { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; outline:none; }
+    input:focus { border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,.2); }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .btn { background:#2563eb; color:#fff; border:0; padding:10px 14px; border-radius:999px; cursor:pointer; margin-top:10px; }
+    .btn:hover { filter:brightness(.95); }
+    .muted { color:#6b7280; font-size:12px; }
+    .qa-item { background:#f8fafc; border:1px solid #e5e7eb; padding:10px; border-radius:10px; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <h1>Medicare Helper — Always-on AI</h1>
+  <p class="muted">Type card info, it’s saved only on <strong>this device</strong>. Ask questions — AI runs on the server.</p>
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(400).json({ error: 'Missing OPENAI_API_KEY' });
+  <div class="card">
+    <h3>Your Medicare card details</h3>
+    <form id="form">
+      <label>Full name <input id="name" type="text" placeholder="JANE Q PUBLIC"></label>
+      <label>Medicare Number (MBI) <input id="mbi" type="text" placeholder="1EG4-TE5-MK73"></label>
+      <div class="row">
+        <label>Part A effective <input id="a" type="date"></label>
+        <label>Part B effective <input id="b" type="date"></label>
+      </div>
+      <button class="btn" type="submit">Save</button>
+    </form>
+    <div id="view" style="display:none;">
+      <p><strong>Name:</strong> <span id="v-name"></span></p>
+      <p><strong>MBI:</strong> <span id="v-mbi"></span></p>
+      <p><strong>Part A:</strong> <span id="v-a"></span></p>
+      <p><strong>Part B:</strong> <span id="v-b"></span></p>
+      <button class="btn" id="edit">Edit</button>
+      <button class="btn" id="delete" style="background:#b91c1c;">Delete</button>
+    </div>
+  </div>
 
-    // Read JSON body safely
-    let body = req.body;
-    if (!body) {
-      body = await new Promise((resolve) => {
-        let raw = '';
-        req.on('data', (c) => (raw += c));
-        req.on('end', () => {
-          try { resolve(JSON.parse(raw || '{}')); } catch { resolve({}); }
-        });
-      });
+  <div class="card">
+    <h3>Ask a Medicare question</h3>
+    <input id="q" type="text" placeholder="What is Part A?" style="width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px;">
+    <button class="btn" id="ask">Ask</button>
+    <div id="list"></div>
+    <p class="muted">Disclaimer: General Medicare info only — not legal, medical, or financial advice.</p>
+  </div>
+
+  <script>
+    const SKEY='medicare_profile_v1';
+    const form=document.getElementById('form'); const view=document.getElementById('view');
+    const list=document.getElementById('list'); const qI=document.getElementById('q');
+
+    function saveProfile(p){ localStorage.setItem(SKEY, JSON.stringify(p)); }
+    function loadProfile(){ try{ return JSON.parse(localStorage.getItem(SKEY)||'null'); }catch{ return null; } }
+    function deleteProfile(){ localStorage.removeItem(SKEY); }
+
+    function showView(p){
+      form.style.display='none'; view.style.display='';
+      document.getElementById('v-name').textContent=p.full_name;
+      document.getElementById('v-mbi').textContent=p.mbi;
+      document.getElementById('v-a').textContent=p.part_a;
+      document.getElementById('v-b').textContent=p.part_b;
     }
-    const { question, profile } = body || {};
-    if (!question) return res.status(400).json({ error: 'Missing question' });
+    function showForm(){ form.style.display=''; view.style.display='none'; }
 
-    const system = 'You are a Medicare explainer. Use public Medicare info. Answer clearly at a 7th-grade level. If plan-specific info is needed, say so. Keep answers under 180 words.';
-    const userContext = profile
-      ? `User info: name=${profile.full_name||''}; PartA=${profile.part_a||''}; PartB=${profile.part_b||''}.`
-      : 'No saved user info.';
-    const prompt = `${userContext}\n\nUser question: ${question}`;
+    const existing=loadProfile(); if(existing) showView(existing);
 
-    const resp = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        input: [
-          { role: 'system', content: system },
-          { role: 'user', content: prompt }
-        ]
-      })
+    form.addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const p={ full_name: form.name.value, mbi: form.mbi.value, part_a: form.a.value, part_b: form.b.value };
+      saveProfile(p); showView(p);
     });
+    document.getElementById('edit')?.addEventListener('click', ()=> showForm());
+    document.getElementById('delete')?.addEventListener('click', ()=> { deleteProfile(); showForm(); });
 
-    if (!resp.ok) {
-      const txt = await resp.text();
-      return res.status(500).json({ error: 'OpenAI error', detail: txt });
+    function addQA(q,a){
+      const box=document.createElement('div'); box.className='qa-item';
+      box.innerHTML='<strong>You:</strong> '+q+'<br><strong>Answer:</strong> '+a.replace(/\\n/g,'<br>');
+      list.prepend(box);
     }
-    const data = await resp.json();
-    const answer = data.output_text || 'Sorry — no text returned.';
-    res.status(200).json({ answer });
-  } catch (e) {
-    res.status(500).json({ error: String(e) });
-  }
-}
+
+    document.getElementById('ask').addEventListener('click', async ()=>{
+      const q=(qI.value||'').trim(); if(!q) return;
+      addQA(q, '<em>Thinking…</em>');
+      const profile = loadProfile();
+      try{
+        const res = await fetch('/api/ask', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ question: q, profile: profile ? { full_name: profile.full_name, part_a: profile.part_a, part_b: profile.part_b } : null })
+        });
+        const data = await res.json();
+        const a = data.answer || data.error || 'No answer.';
+        list.firstChild.innerHTML = '<strong>You:</strong> '+q+'<br><strong>Answer:</strong> '+a.replace(/\\n/g,'<br>');
+      }catch(e){
+        list.firstChild.innerHTML = '<strong>You:</strong> '+q+'<br><strong>Answer:</strong> Error: '+(e.message||e);
+      }
+      qI.value='';
+    });
+  </script>
+</body>
+</html>
