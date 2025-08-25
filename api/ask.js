@@ -1,12 +1,12 @@
-// api/ask.js — Vercel Serverless Function
+// api/ask.js — Vercel Serverless Function (Gemini 1.5 Flash)
 export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(400).json({ error: 'Missing OPENAI_API_KEY' });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(400).json({ error: 'Missing GEMINI_API_KEY' });
 
-    // Safely read JSON body (works whether Vercel parsed it or not)
+    // Safely read JSON body
     let body = req.body;
     if (!body) {
       body = await new Promise((resolve) => {
@@ -22,33 +22,40 @@ export default async function handler(req, res) {
     if (!question) return res.status(400).json({ error: 'Missing question' });
 
     const system =
-      'You are a Medicare explainer. Use public Medicare info only. Answer clearly at a 7th-grade level. ' +
+      'You are a Medicare explainer. Use public Medicare info. Answer at a clear 7th-grade level. ' +
       'If plan-specific info is needed, say so. Keep answers under 180 words.';
     const userContext = profile
-      ? `User info: name=${profile.full_name||''}; PartA=${profile.part_a||''}; PartB=${profile.part_b||''}.`
+      ? `User info: name=${profile.full_name || ''}; PartA=${profile.part_a || ''}; PartB=${profile.part_b || ''}.`
       : 'No saved user info.';
     const prompt = `${userContext}\n\nUser question: ${question}`;
 
-    const resp = await fetch('https://api.openai.com/v1/responses', {
+    // Call Gemini (Google Generative Language API)
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + encodeURIComponent(apiKey);
+
+    const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        input: [
-          { role: 'system', content: system },
-          { role: 'user', content: prompt }
+        // Include system behavior
+        system_instruction: { role: 'system', parts: [{ text: system }] },
+        contents: [
+          { role: 'user', parts: [{ text: prompt }] }
         ]
       })
     });
 
     if (!resp.ok) {
       const txt = await resp.text();
-      return res.status(500).json({ error: 'OpenAI error', detail: txt });
+      return res.status(500).json({ error: 'Gemini error', detail: txt });
     }
+
     const data = await resp.json();
-    const answer = data.output_text || 'Sorry — no text returned.';
-    res.status(200).json({ answer });
+    const answer =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      data?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') ||
+      'No answer.';
+    return res.status(200).json({ answer });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 }
